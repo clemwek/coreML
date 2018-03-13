@@ -26,6 +26,7 @@ class RecognizerViewController: UIViewController {
     let imagePickerController = UIImagePickerController()
     var groceryItems: [String] = []
     var currentPrediction: String?
+    let mobileNet = MobileNet()
 
     // MARK: Life Cycle
     
@@ -84,7 +85,12 @@ class RecognizerViewController: UIViewController {
     }
 
     private func recognize(image: UIImage) -> String? {
-        
+        if let pixelBufferImage = ImageToPixelBufferConverter.convertToPixelBuffer(image: image) {
+            if let prediction = try? self.mobileNet.prediction(image: pixelBufferImage) {
+                return prediction.classLabel
+            }
+        }
+        return nil
     }
     
     private func showRecognitionFailureAlert() {

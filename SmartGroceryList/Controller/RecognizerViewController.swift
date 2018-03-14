@@ -7,11 +7,12 @@
 //
 
 import UIKit
+import Vision
 
 // MARK: - RecognizerViewController: UIViewController
 
 class RecognizerViewController: UIViewController {
-
+    
     // MARK: Outlets
     
     @IBOutlet var imageView: UIImageView!
@@ -19,15 +20,15 @@ class RecognizerViewController: UIViewController {
     @IBOutlet var predictionView: PredictionView!
     @IBOutlet var photoSourceView: UIView!
     @IBOutlet var tableView: UITableView!
-
+    
     // MARK: Properties
     
     let CellReuseIdentifer = "GroceryItemCell"
     let imagePickerController = UIImagePickerController()
+    let mobileNet = MobileNet()
     var groceryItems: [String] = []
     var currentPrediction: String?
-    let mobileNet = MobileNet()
-
+    
     // MARK: Life Cycle
     
     override func viewDidLoad() {
@@ -36,7 +37,7 @@ class RecognizerViewController: UIViewController {
         predictionView.isHidden = true
         tableView.reloadData()
     }
-
+    
     // MARK: Actions
     
     @IBAction func takePhoto() {
@@ -52,7 +53,7 @@ class RecognizerViewController: UIViewController {
         imagePickerController.sourceType = .photoLibrary
         present(imagePickerController, animated: true, completion: nil)
     }
-
+    
     @IBAction func addToList() {
         if let predictionToAdd = currentPrediction {
             groceryItems.append(predictionToAdd)
@@ -60,22 +61,21 @@ class RecognizerViewController: UIViewController {
             clearPrediction()
         }
     }
-
+    
     @IBAction func rejectPrediction() {
         clearPrediction()
     }
     
     // MARK: Private
-
-    private func setupPrediction(prediction: String, image: UIImage) {
+    
+    private func setupPrediction(prediction: String) {
         predictionView.predictionResultLabel.text = prediction
         predictionView.isHidden = false
         photoSourceView.isHidden = true
-        imageView.image = image
-
+        
         currentPrediction = prediction
     }
-
+    
     private func clearPrediction() {
         predictionView.isHidden = true
         photoSourceView.isHidden = false
@@ -83,14 +83,46 @@ class RecognizerViewController: UIViewController {
         imageView.image = nil
         currentPrediction = nil
     }
-
-    private func recognize(image: UIImage) -> String? {
-        if let pixelBufferImage = ImageToPixelBufferConverter.convertToPixelBuffer(image: image) {
-            if let prediction = try? self.mobileNet.prediction(image: pixelBufferImage) {
-                return prediction.classLabel
+    
+    private func classifyFood(image: UIImage) {
+        // 1. Create the vision model, VNCoreMLModel
+        guard let visionCoreMLModel = try? VNCoreMLModel(for: mobileNet.model) else {
+            fatalError("Unable to convert to vision Core ML Model")
+        }
+        
+        // 2. Create the request, VNCoreMLRequest
+        let foodClassificationRequest = VNCoreMLRequest(model: visionCoreMLModel,
+                                                        completionHandler: self.handleFoodClassificationResults)
+        
+        // 3. Create the request handler, VNImageRequestHandler
+        guard let cgImage = image.cgImage else {
+            fatalError("Unable to convert \(image) to CGImage")
+        }
+        let cgImageOrientation = CGImagePropertyOrientation(rawValue: UInt32(image.imageOrientation.rawValue))!
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImageOrientation)
+        // 4. Call perform on the request handler with the request
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try handler.perform([foodClassificationRequest])
+            } catch {
+                print("Error performing food flassification: \(error)")
             }
         }
-        return nil
+        
+    }
+    
+    // 5. Handle the food classification results
+    private func handleFoodClassificationResults(for request: VNRequest, error: Error?) {
+        DispatchQueue.main.async {
+            guard
+                let classifications = request.results as? [VNClassificationObservation],
+                let topClassification = classifications.first
+                else {
+                    self.showRecognitionFailureAlert()
+                    return
+            }
+            self.setupPrediction(prediction: topClassification.identifier)
+        }
     }
     
     private func showRecognitionFailureAlert() {
@@ -113,7 +145,7 @@ extension RecognizerViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         return groceryItems.count
     }
-
+    
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let groceryItemCell = tableView.dequeueReusableCell(withIdentifier: CellReuseIdentifer) as! GroceryItemTableViewCell
         if indexPath.row < groceryItems.count {
@@ -132,12 +164,9 @@ extension RecognizerViewController: UIImagePickerControllerDelegate, UINavigatio
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [String : Any]) {
         if let imageSelected = info[UIImagePickerControllerOriginalImage] as? UIImage {
             imageView.contentMode = .scaleAspectFit
+            imageView.image = imageSelected
             
-            if let topPrediction = recognize(image: imageSelected) {
-                setupPrediction(prediction: topPrediction, image: imageSelected)
-            } else {
-                showRecognitionFailureAlert()
-            }
+            classifyFood(image: imageSelected)
         }
         
         dismiss(animated: true, completion: nil)
@@ -147,3 +176,4 @@ extension RecognizerViewController: UIImagePickerControllerDelegate, UINavigatio
         dismiss(animated: true, completion: nil)
     }
 }
+
